@@ -243,7 +243,7 @@ function startGUI () {
     steadyFlowFolder.add(config, 'STEADY_FLOW_ENABLED').name('Enabled').onFinishChange(updateArrowVisuals); // 矢印表示/非表示のため
     steadyFlowFolder.add(config, 'STEADY_FLOW_X', 0.0, 1.0).name('Position X').onChange(updateArrowVisuals).listen();
     steadyFlowFolder.add(config, 'STEADY_FLOW_Y', 0.0, 1.0).name('Position Y').onChange(updateArrowVisuals).listen();
-    steadyFlowFolder.add(config, 'STEADY_FLOW_SPEED', 0, 100).name('Speed').onChange(updateArrowVisuals).listen(); // 強さ
+    steadyFlowFolder.add(config, 'STEADY_FLOW_SPEED', 0, 500).name('Speed').onChange(updateArrowVisuals).listen(); // 強さ
     steadyFlowFolder.add(config, 'STEADY_FLOW_ANGLE', 0, 360).name('Angle (deg)').onChange(updateArrowVisuals).listen(); // 角度
     steadyFlowFolder.add(config, 'STEADY_FLOW_R', 0.0, 1.0).name('Color R').listen(); // 色は矢印の見た目に直接影響しないのでonChangeは任意
     steadyFlowFolder.add(config, 'STEADY_FLOW_G', 0.0, 1.0).name('Color G').listen();
@@ -838,6 +838,7 @@ const divergenceShader = compileShader(gl.FRAGMENT_SHADER, `
         gl_FragColor = vec4(div, 0.0, 0.0, 1.0);
     }
 `);
+
 
 const curlShader = compileShader(gl.FRAGMENT_SHADER, `
     precision mediump float;
