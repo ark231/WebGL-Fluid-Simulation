@@ -259,28 +259,8 @@ function startGUI () {
         splatStack.push(parseInt(Math.random() * 20) + 5);
     } }, 'fun').name('Random splats');
 
-    // 流れ源のGUIコントロールを生成
-    // config.STEADY_FLOW_SOURCES.forEach((source, index) => {
-    //     const folderName = `Flow Source ${index + 1}`;
-    //     let sourceFolder = gui.addFolder(folderName);
-    //     sourceFolder.add(source, 'ENABLED').name('Enabled');
-    //     sourceFolder.add(source, 'X', 0.0, 1.0).name('Position X').listen();
-    //     sourceFolder.add(source, 'Y', 0.0, 1.0).name('Position Y').listen();
-    //
-    //     // Speed/Angle方式の場合
-    //     sourceFolder.add(source, 'SPEED', 0, 500).name('Speed').listen();
-    //     sourceFolder.add(source, 'ANGLE', 0, 360).name('Angle (deg)').listen();
-    //
-    //     // DX/DY方式の場合 (上記とどちらかを選択)
-    //     // sourceFolder.add(source, 'DX', -5000, 5000).name('Velocity X').listen();
-    //     // sourceFolder.add(source, 'DY', -5000, 5000).name('Velocity Y').listen();
-    //
-    //     sourceFolder.add(source, 'R', 0.0, 1.0).name('Color R').listen();
-    //     sourceFolder.add(source, 'G', 0.0, 1.0).name('Color G').listen();
-    //     sourceFolder.add(source, 'B', 0.0, 1.0).name('Color B').listen();
-    //     sourceFolder.add(source, 'RADIUS', 0.01, 1.0).name('Radius').listen();
-    //     // sourceFolder.open(); // 必要ならデフォルトでフォルダを開く
-    // });
+    // ★ リセットボタンを追加
+    gui.add({ reset: resetSimulation }, 'reset').name('Reset Simulation');
 
     // 複数の流れ源のGUIコントロールを生成
     config.STEADY_FLOW_SOURCES.forEach((source, index) => {
@@ -2025,4 +2005,93 @@ function createOrUpdateArrowVisuals() {
         directionHandle.setAttribute('data-handle-type', 'direction'); // ハンドルの種類
         arrowOverlay.appendChild(directionHandle); // グループではなく直接overlayに追加
     });
+}
+// script.js
+
+// ... (既存の関数の定義) ...
+
+function clearFBO(fbo, clearColor = [0, 0, 0, 0]) {
+    if (!fbo) return;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo.fbo);
+    gl.clearColor(clearColor[0], clearColor[1], clearColor[2], clearColor[3]);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+
+    if (fbo.write) { // Double FBO の場合、両方をクリア
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fbo.write.fbo);
+        gl.clearColor(clearColor[0], clearColor[1], clearColor[2], clearColor[3]);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
+}
+
+
+function resetSimulation() {
+    // 1. 速度場をクリア (DoubleFBOなので両方)
+    if (velocity) {
+        clearFBO(velocity.read, [0,0,0,0]);
+        clearFBO(velocity.write, [0,0,0,0]);
+    }
+
+    // 2. 密度場をクリア (DoubleFBOなので両方)
+    if (dye) {
+        // 背景色でクリアするか、完全に透明にするかを選択
+        // let backColor = normalizeColor(config.BACK_COLOR);
+        // clearFBO(dye.read, [backColor.r, backColor.g, backColor.b, config.TRANSPARENT ? 0 : 1]);
+        // clearFBO(dye.write, [backColor.r, backColor.g, backColor.b, config.TRANSPARENT ? 0 : 1]);
+        // または単純に黒/透明でクリア
+        clearFBO(dye.read, [0,0,0,0]);
+        clearFBO(dye.write, [0,0,0,0]);
+    }
+
+    // 3. 圧力場をクリア (DoubleFBOなので両方)
+    // config.PRESSURE の値でクリアするか、0でクリアするか
+    if (pressure) {
+        // clearProgram を使って config.PRESSURE でフィルすることも可能だが、
+        // 単純に0でクリアする方が簡単。
+        // clearFBO(pressure.read, [0,0,0,0]); // 圧力は通常スカラーなのでR成分のみでよいが、FBOはRGBAの可能性
+        // clearFBO(pressure.write, [0,0,0,0]);
+        // または clearProgram を使用して初期圧力値でフィルする
+        if (pressure.read && pressure.write) {
+            clearProgram.bind();
+            gl.uniform1i(clearProgram.uniforms.uTexture, pressure.read.attach(0)); // ダミーでアタッチ
+            gl.uniform1f(clearProgram.uniforms.value, config.PRESSURE); // 初期圧力値でフィル
+            blit(pressure.write); // write をフィル
+            pressure.swap(); // swapして
+            gl.uniform1i(clearProgram.uniforms.uTexture, pressure.read.attach(0)); // ダミーでアタッチ
+            gl.uniform1f(clearProgram.uniforms.value, config.PRESSURE);
+            blit(pressure.write); // もう片方もフィル (これで両方同じ値になる)
+        }
+    }
+
+    // 4. 発散、渦度をクリア (SingleFBO)
+    if (divergence) clearFBO(divergence, [0,0,0,0]);
+    if (curl) clearFBO(curl, [0,0,0,0]);
+
+    // 5. ポインター/入力状態のリセット
+    pointers.forEach(p => {
+        p.down = false;
+        p.moved = false;
+        p.deltaX = 0;
+        p.deltaY = 0;
+    });
+    splatStack = []; //
+
+    // 6. （オプション）BloomやSunraysなどの中間FBOもクリアした方が良い場合がある
+    if (bloom) clearFBO(bloom); //
+    bloomFramebuffers.forEach(fbo => clearFBO(fbo)); //
+    if (sunrays) clearFBO(sunrays); //
+    if (sunraysTemp) clearFBO(sunraysTemp); //
+
+    // 7. 障害物マスクは設定に基づいて再描画されるので、ここでは何もしないか、
+    //    もし障害物が動的に生成されるものであればクリアする。
+    //    現在の実装では updateObstacleMask() が設定に基づいて描画する。
+
+    // 8. 画面を一度描画更新してクリアされた状態を反映
+    // render(null) を直接呼ぶか、次のフレームで自然に更新されるのを待つ。
+    // 即時反映のため、一度ダミーのステップと描画を行うか、
+    // requestAnimationFrame 外で render(null) を呼ぶ必要があるかもしれないが、
+    // 通常は次の update() でクリアされた状態から始まる。
+
+    console.log("Simulation Reset");
 }
