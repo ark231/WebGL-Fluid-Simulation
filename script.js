@@ -86,8 +86,8 @@ let config = {
     STEADY_FLOW_ENABLED: false,      // To turn the source on/off
     STEADY_FLOW_X: 0.5,            // X position (0.0 to 1.0)
     STEADY_FLOW_Y: 0.75,           // Y position (0.0 to 1.0)
-    STEADY_FLOW_DX: 0,             // X component of velocity force
-    STEADY_FLOW_DY: -20,           // Y component of velocity force (e.g., upward)
+    STEADY_FLOW_SPEED: 20,       // 流れの強さ (絶対値)
+    STEADY_FLOW_ANGLE: 90,         // 流れの角度 (0度が右、90度が上、度数法)
     STEADY_FLOW_R: 1.0,            // Red component of color (0.0 to 1.0)
     STEADY_FLOW_G: 0.5,            // Green component of color (0.0 to 1.0)
     STEADY_FLOW_B: 0.0,            // Blue component of color (0.0 to 1.0)
@@ -243,8 +243,8 @@ function startGUI () {
     steadyFlowFolder.add(config, 'STEADY_FLOW_ENABLED').name('Enabled').onFinishChange(updateArrowVisuals); // 矢印表示/非表示のため
     steadyFlowFolder.add(config, 'STEADY_FLOW_X', 0.0, 1.0).name('Position X').onChange(updateArrowVisuals).listen();
     steadyFlowFolder.add(config, 'STEADY_FLOW_Y', 0.0, 1.0).name('Position Y').onChange(updateArrowVisuals).listen();
-    steadyFlowFolder.add(config, 'STEADY_FLOW_DX', -100, 100).name('Velocity X').onChange(updateArrowVisuals).listen();
-    steadyFlowFolder.add(config, 'STEADY_FLOW_DY', -100, 100).name('Velocity Y').onChange(updateArrowVisuals).listen();
+    steadyFlowFolder.add(config, 'STEADY_FLOW_SPEED', 0, 100).name('Speed').onChange(updateArrowVisuals).listen(); // 強さ
+    steadyFlowFolder.add(config, 'STEADY_FLOW_ANGLE', 0, 360).name('Angle (deg)').onChange(updateArrowVisuals).listen(); // 角度
     steadyFlowFolder.add(config, 'STEADY_FLOW_R', 0.0, 1.0).name('Color R').listen(); // 色は矢印の見た目に直接影響しないのでonChangeは任意
     steadyFlowFolder.add(config, 'STEADY_FLOW_G', 0.0, 1.0).name('Color G').listen();
     steadyFlowFolder.add(config, 'STEADY_FLOW_B', 0.0, 1.0).name('Color B').listen();
@@ -1499,13 +1499,20 @@ function applySteadyFlow () {
             g: config.STEADY_FLOW_G * 0.15,
             b: config.STEADY_FLOW_B * 0.15
         };
+        // 角度（度数法）をラジアンに変換
+        const angleRad = config.STEADY_FLOW_ANGLE * Math.PI / 180.0;
+        // DX, DYを計算 (数学の標準的な角度。0度がX軸正方向、角度増加は反時計回り)
+        // シミュレーションのY軸が上向き正の場合、sinでOK。
+        // もしシミュレーションのY軸が下向き正なら、dy = config.STEADY_FLOW_SPEED * Math.sin(angleRad) * -1; のように調整
+        const dx = config.STEADY_FLOW_SPEED * Math.cos(angleRad);
+        const dy = config.STEADY_FLOW_SPEED * Math.sin(angleRad) * -1;
         // The STEADY_FLOW_RADIUS from config is used similarly to SPLAT_RADIUS,
         // so it also needs division by 100.0 before being passed to splat.
         splat(
             config.STEADY_FLOW_X,
             config.STEADY_FLOW_Y,
-            config.STEADY_FLOW_DX,
-            config.STEADY_FLOW_DY,
+            dx,
+            dy,
             steadyColor,
             config.STEADY_FLOW_RADIUS / 100.0 // Pass the specific radius for the steady source
         );
@@ -1751,7 +1758,8 @@ function createArrow() {
 }
 
 function updateArrowVisuals() {
-    if (!arrowElement || !config.STEADY_FLOW_ENABLED) { // STEADY_FLOW_ENABLED もしくは専用の表示フラグで制御
+    if (!arrowElement || !config.STEADY_FLOW_ENABLED) {
+        // ... (表示/非表示ロジックは同じ) ...
         if(arrowElement) arrowElement.style.display = 'none';
         if(document.getElementById('arrow-position-handle')) document.getElementById('arrow-position-handle').style.display = 'none';
         if(arrowHandle) arrowHandle.style.display = 'none';
@@ -1761,21 +1769,20 @@ function updateArrowVisuals() {
     document.getElementById('arrow-position-handle').style.display = '';
     arrowHandle.style.display = '';
 
-
-    const canvasWidth = canvas.clientWidth; // clientWidth を使う
+    const canvasWidth = canvas.clientWidth;
     const canvasHeight = canvas.clientHeight;
 
     const startX = config.STEADY_FLOW_X * canvasWidth;
-    const startY = (1.0 - config.STEADY_FLOW_Y) * canvasHeight; // Y座標は反転しているため
+    const startY = (1.0 - config.STEADY_FLOW_Y) * canvasHeight; // Y座標はSVGでは反転
 
-    // 速度ベクトルから終点を計算 (スケール調整が必要)
-    const forceScale = 0.05; // この値を調整して矢印の長さを制御
-    let endX = startX + config.STEADY_FLOW_DX * forceScale;
-    let endY = startY - config.STEADY_FLOW_DY * forceScale; // DYは上向きが正なのでSVGでは減算
+    const displayLength = 50; // 矢印の画面上での固定長
+    // 角度をラジアンに変換 (SVGの角度の扱いに注意。通常0度は右、時計回りが正だが、atan2やcos/sinは数学標準)
+    // ここでは数学標準の角度（0度が右、反時計回りが正）でSTEADY_FLOW_ANGLEが設定されていると仮定
+    // SVGのY軸は下向きなので、sinの結果の符号に注意
+    const angleRad = config.STEADY_FLOW_ANGLE * Math.PI / 180.0;
 
-    // 画面外に出すぎないように簡易クリッピング (オプション)
-    endX = Math.max(0, Math.min(canvasWidth, endX));
-    endY = Math.max(0, Math.min(canvasHeight, endY));
+    const endX = startX + displayLength * Math.cos(angleRad);
+    const endY = startY + displayLength * Math.sin(angleRad); // SVG Y軸は下向きなので、数学的な正のYはSVGでは下
 
     const lineEl = document.getElementById('arrow-line');
     lineEl.setAttribute('x1', startX);
@@ -1783,18 +1790,17 @@ function updateArrowVisuals() {
     lineEl.setAttribute('x2', endX);
     lineEl.setAttribute('y2', endY);
 
-    // 矢印の頭の描画 (三角形の頂点計算)
     const headEl = document.getElementById('arrow-head');
-    const angle = Math.atan2(endY - startY, endX - startX);
-    const headLength = 15; // 矢頭の大きさ
+    // 矢印の頭の向きもangleRadから計算
+    const headAngle = angleRad; // Math.atan2(endY - startY, endX - startX) と同じはず
+    const headLength = 15;
     const points = [
         endX, endY,
-        endX - headLength * Math.cos(angle - Math.PI / 6), endY - headLength * Math.sin(angle - Math.PI / 6),
-        endX - headLength * Math.cos(angle + Math.PI / 6), endY - headLength * Math.sin(angle + Math.PI / 6)
+        endX - headLength * Math.cos(headAngle - Math.PI / 6), endY - headLength * Math.sin(headAngle - Math.PI / 6),
+        endX - headLength * Math.cos(headAngle + Math.PI / 6), endY - headLength * Math.sin(headAngle + Math.PI / 6)
     ].join(',');
     headEl.setAttribute('points', points);
 
-    // ハンドルの位置更新
     const posHandle = document.getElementById('arrow-position-handle');
     posHandle.setAttribute('cx', startX);
     posHandle.setAttribute('cy', startY);
@@ -1827,10 +1833,9 @@ function addArrowEventListeners(positionHandle, directionHandle) {
         const canvasHeight = canvas.clientHeight;
 
         if (isDraggingArrowPosition) {
-            let newSvgX = e.clientX - offsetX;
+            let newSvgX = e.clientX - offsetX; // offsetX, offsetYはmousedownで計算
             let newSvgY = e.clientY - offsetY;
 
-            // Canvas境界内に制限 (オプション)
             newSvgX = Math.max(0, Math.min(canvasWidth, newSvgX));
             newSvgY = Math.max(0, Math.min(canvasHeight, newSvgY));
 
@@ -1840,18 +1845,26 @@ function addArrowEventListeners(positionHandle, directionHandle) {
             updateArrowVisuals();
         } else if (isDraggingArrowDirection) {
             const startX = config.STEADY_FLOW_X * canvasWidth;
-            const startY = (1.0 - config.STEADY_FLOW_Y) * canvasHeight;
+            const startY = (1.0 - config.STEADY_FLOW_Y) * canvasHeight; // SVG座標での始点
 
             let currentMouseX = e.clientX;
             let currentMouseY = e.clientY;
 
-            // Canvas境界内に制限 (オプション)
-            currentMouseX = Math.max(0, Math.min(canvasWidth, currentMouseX));
-            currentMouseY = Math.max(0, Math.min(canvasHeight, currentMouseY));
+            // ベクトル計算
+            let dirX = currentMouseX - startX;
+            let dirY = currentMouseY - startY; // SVG座標系でのY方向 (下向きが正)
 
-            const forceScale = 0.05; // updateArrowVisualsと合わせる
-            config.STEADY_FLOW_DX = (currentMouseX - startX) / forceScale;
-            config.STEADY_FLOW_DY = -(currentMouseY - startY) / forceScale; // DYの向き注意
+            // atan2で角度を計算 (ラジアン)
+            // Math.atan2(y, x) は -PI から PI の範囲で角度を返す
+            let angleRad = Math.atan2(dirY, dirX);
+
+            // 角度を度数法に変換 (0-360度)
+            let angleDeg = angleRad * 180 / Math.PI;
+            if (angleDeg < 0) {
+                angleDeg += 360; // 角度を0-360の範囲に正規化
+            }
+
+            config.STEADY_FLOW_ANGLE = angleDeg;
 
             updateArrowVisuals();
         }
