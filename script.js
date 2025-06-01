@@ -87,7 +87,7 @@ let config = {
     STEADY_FLOW_X: 0.5,            // X position (0.0 to 1.0)
     STEADY_FLOW_Y: 0.75,           // Y position (0.0 to 1.0)
     STEADY_FLOW_DX: 0,             // X component of velocity force
-    STEADY_FLOW_DY: -2000,         // Y component of velocity force (e.g., upward)
+    STEADY_FLOW_DY: -20,           // Y component of velocity force (e.g., upward)
     STEADY_FLOW_R: 1.0,            // Red component of color (0.0 to 1.0)
     STEADY_FLOW_G: 0.5,            // Green component of color (0.0 to 1.0)
     STEADY_FLOW_B: 0.0,            // Blue component of color (0.0 to 1.0)
@@ -237,8 +237,8 @@ function startGUI () {
     steadyFlowFolder.add(config, 'STEADY_FLOW_ENABLED').name('Enabled');
     steadyFlowFolder.add(config, 'STEADY_FLOW_X', 0.0, 1.0).name('Position X');
     steadyFlowFolder.add(config, 'STEADY_FLOW_Y', 0.0, 1.0).name('Position Y');
-    steadyFlowFolder.add(config, 'STEADY_FLOW_DX', -5000, 5000).name('Velocity X');
-    steadyFlowFolder.add(config, 'STEADY_FLOW_DY', -5000, 5000).name('Velocity Y');
+    steadyFlowFolder.add(config, 'STEADY_FLOW_DX', -100, 100).name('Velocity X');
+    steadyFlowFolder.add(config, 'STEADY_FLOW_DY', -100, 100).name('Velocity Y');
     steadyFlowFolder.add(config, 'STEADY_FLOW_R', 0.0, 1.0).name('Color R');
     steadyFlowFolder.add(config, 'STEADY_FLOW_G', 0.0, 1.0).name('Color G');
     steadyFlowFolder.add(config, 'STEADY_FLOW_B', 0.0, 1.0).name('Color B');
