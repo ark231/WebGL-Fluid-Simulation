@@ -82,6 +82,16 @@ let config = {
     SUNRAYS: true,
     SUNRAYS_RESOLUTION: 196,
     SUNRAYS_WEIGHT: 1.0,
+// New properties for the steady flow source:
+    STEADY_FLOW_ENABLED: false,      // To turn the source on/off
+    STEADY_FLOW_X: 0.5,            // X position (0.0 to 1.0)
+    STEADY_FLOW_Y: 0.75,           // Y position (0.0 to 1.0)
+    STEADY_FLOW_DX: 0,             // X component of velocity force
+    STEADY_FLOW_DY: -2000,         // Y component of velocity force (e.g., upward)
+    STEADY_FLOW_R: 1.0,            // Red component of color (0.0 to 1.0)
+    STEADY_FLOW_G: 0.5,            // Green component of color (0.0 to 1.0)
+    STEADY_FLOW_B: 0.0,            // Blue component of color (0.0 to 1.0)
+    STEADY_FLOW_RADIUS: 0.1,       // Radius of the source (similar scale to SPLAT_RADIUS)
 }
 
 function pointerPrototype () {
@@ -221,6 +231,18 @@ function startGUI () {
     gui.add({ fun: () => {
         splatStack.push(parseInt(Math.random() * 20) + 5);
     } }, 'fun').name('Random splats');
+
+    // Add new GUI Folder for Steady Flow
+    let steadyFlowFolder = gui.addFolder('Steady Flow Source');
+    steadyFlowFolder.add(config, 'STEADY_FLOW_ENABLED').name('Enabled');
+    steadyFlowFolder.add(config, 'STEADY_FLOW_X', 0.0, 1.0).name('Position X');
+    steadyFlowFolder.add(config, 'STEADY_FLOW_Y', 0.0, 1.0).name('Position Y');
+    steadyFlowFolder.add(config, 'STEADY_FLOW_DX', -5000, 5000).name('Velocity X');
+    steadyFlowFolder.add(config, 'STEADY_FLOW_DY', -5000, 5000).name('Velocity Y');
+    steadyFlowFolder.add(config, 'STEADY_FLOW_R', 0.0, 1.0).name('Color R');
+    steadyFlowFolder.add(config, 'STEADY_FLOW_G', 0.0, 1.0).name('Color G');
+    steadyFlowFolder.add(config, 'STEADY_FLOW_B', 0.0, 1.0).name('Color B');
+    steadyFlowFolder.add(config, 'STEADY_FLOW_RADIUS', 0.01, 1.0).name('Radius');
 
     let bloomFolder = gui.addFolder('Bloom');
     bloomFolder.add(config, 'BLOOM').name('enabled').onFinishChange(updateKeywords);
@@ -1179,8 +1201,10 @@ function update () {
         initFramebuffers();
     updateColors(dt);
     applyInputs();
-    if (!config.PAUSED)
+    if (!config.PAUSED){
+        applySteadyFlow(); // Call the new function here
         step(dt);
+    }
     render(null);
     requestAnimationFrame(update);
 }
@@ -1438,20 +1462,47 @@ function multipleSplats (amount) {
     }
 }
 
-function splat (x, y, dx, dy, color) {
+function splat (x, y, dx, dy, color, radiusValueOverride) { // New signature
     splatProgram.bind();
     gl.uniform1i(splatProgram.uniforms.uTarget, velocity.read.attach(0));
     gl.uniform1f(splatProgram.uniforms.aspectRatio, canvas.width / canvas.height);
     gl.uniform2f(splatProgram.uniforms.point, x, y);
     gl.uniform3f(splatProgram.uniforms.color, dx, dy, 0.0);
-    gl.uniform1f(splatProgram.uniforms.radius, correctRadius(config.SPLAT_RADIUS / 100.0));
+    // Determine the radius to use
+    let radiusToApply = config.SPLAT_RADIUS / 100.0; // Default from global config
+    if (radiusValueOverride !== undefined) {
+        radiusToApply = radiusValueOverride; // Use override if provided
+    }
+    gl.uniform1f(splatProgram.uniforms.radius, correctRadius(radiusToApply));
     blit(velocity.write);
     velocity.swap();
 
     gl.uniform1i(splatProgram.uniforms.uTarget, dye.read.attach(0));
-    gl.uniform3f(splatProgram.uniforms.color, color.r, color.g, color.b);
+    // Color for dye splat (ensure it's scaled appropriately before calling splat)
+    gl.uniform3f(splatProgram.uniforms.color, color.r, color.g, color.b); 
     blit(dye.write);
     dye.swap();
+}
+
+function applySteadyFlow () {
+    if (config.STEADY_FLOW_ENABLED) {
+        // Convert 0-1 GUI color to the 0.0-0.15 range used by splats
+        const steadyColor = {
+            r: config.STEADY_FLOW_R * 0.15,
+            g: config.STEADY_FLOW_G * 0.15,
+            b: config.STEADY_FLOW_B * 0.15
+        };
+        // The STEADY_FLOW_RADIUS from config is used similarly to SPLAT_RADIUS,
+        // so it also needs division by 100.0 before being passed to splat.
+        splat(
+            config.STEADY_FLOW_X,
+            config.STEADY_FLOW_Y,
+            config.STEADY_FLOW_DX,
+            config.STEADY_FLOW_DY,
+            steadyColor,
+            config.STEADY_FLOW_RADIUS / 100.0 // Pass the specific radius for the steady source
+        );
+    }
 }
 
 function correctRadius (radius) {
