@@ -110,8 +110,14 @@ let config = {
 }
 
 const arrowOverlay = document.getElementById('arrow-overlay');
-let arrowElement = null; // SVGの矢印要素を保持
-let arrowHandle = null; // 矢印の向きを操作するハンドル
+// ドラッグ状態を管理する変数を変更
+let draggingState = {
+    sourceIndex: -1,         // ドラッグ中の流れ源のインデックス
+    isDraggingPosition: false,
+    isDraggingDirection: false,
+    offsetX: 0,
+    offsetY: 0
+};
 let isDraggingArrowPosition = false;
 let isDraggingArrowDirection = false;
 
@@ -253,41 +259,54 @@ function startGUI () {
         splatStack.push(parseInt(Math.random() * 20) + 5);
     } }, 'fun').name('Random splats');
 
-    // // Add new GUI Folder for Steady Flow
-    // let steadyFlowFolder = gui.addFolder('Steady Flow Source');
-    // steadyFlowFolder.add(config, 'STEADY_FLOW_ENABLED').name('Enabled').onFinishChange(updateArrowVisuals); // 矢印表示/非表示のため
-    // steadyFlowFolder.add(config, 'STEADY_FLOW_X', 0.0, 1.0).name('Position X').onChange(updateArrowVisuals).listen();
-    // steadyFlowFolder.add(config, 'STEADY_FLOW_Y', 0.0, 1.0).name('Position Y').onChange(updateArrowVisuals).listen();
-    // steadyFlowFolder.add(config, 'STEADY_FLOW_SPEED', 0, 500).name('Speed').onChange(updateArrowVisuals).listen(); // 強さ
-    // steadyFlowFolder.add(config, 'STEADY_FLOW_ANGLE', 0, 360).name('Angle (deg)').onChange(updateArrowVisuals).listen(); // 角度
-    // steadyFlowFolder.add(config, 'STEADY_FLOW_R', 0.0, 1.0).name('Color R').listen(); // 色は矢印の見た目に直接影響しないのでonChangeは任意
-    // steadyFlowFolder.add(config, 'STEADY_FLOW_G', 0.0, 1.0).name('Color G').listen();
-    // steadyFlowFolder.add(config, 'STEADY_FLOW_B', 0.0, 1.0).name('Color B').listen();
-    // steadyFlowFolder.add(config, 'STEADY_FLOW_RADIUS', 0.01, 1.0).name('Radius').listen(); // 半径も矢印の見た目に影響しないのでonChangeは任意
-    
     // 流れ源のGUIコントロールを生成
+    // config.STEADY_FLOW_SOURCES.forEach((source, index) => {
+    //     const folderName = `Flow Source ${index + 1}`;
+    //     let sourceFolder = gui.addFolder(folderName);
+    //     sourceFolder.add(source, 'ENABLED').name('Enabled');
+    //     sourceFolder.add(source, 'X', 0.0, 1.0).name('Position X').listen();
+    //     sourceFolder.add(source, 'Y', 0.0, 1.0).name('Position Y').listen();
+    //
+    //     // Speed/Angle方式の場合
+    //     sourceFolder.add(source, 'SPEED', 0, 500).name('Speed').listen();
+    //     sourceFolder.add(source, 'ANGLE', 0, 360).name('Angle (deg)').listen();
+    //
+    //     // DX/DY方式の場合 (上記とどちらかを選択)
+    //     // sourceFolder.add(source, 'DX', -5000, 5000).name('Velocity X').listen();
+    //     // sourceFolder.add(source, 'DY', -5000, 5000).name('Velocity Y').listen();
+    //
+    //     sourceFolder.add(source, 'R', 0.0, 1.0).name('Color R').listen();
+    //     sourceFolder.add(source, 'G', 0.0, 1.0).name('Color G').listen();
+    //     sourceFolder.add(source, 'B', 0.0, 1.0).name('Color B').listen();
+    //     sourceFolder.add(source, 'RADIUS', 0.01, 1.0).name('Radius').listen();
+    //     // sourceFolder.open(); // 必要ならデフォルトでフォルダを開く
+    // });
+
+    // 複数の流れ源のGUIコントロールを生成
     config.STEADY_FLOW_SOURCES.forEach((source, index) => {
         const folderName = `Flow Source ${index + 1}`;
         let sourceFolder = gui.addFolder(folderName);
-        sourceFolder.add(source, 'ENABLED').name('Enabled');
-        sourceFolder.add(source, 'X', 0.0, 1.0).name('Position X').listen();
-        sourceFolder.add(source, 'Y', 0.0, 1.0).name('Position Y').listen();
+        
+        // ENABLED: onFinishChange を使うことで、チェックボックス操作完了時に矢印の表示/非表示が更新される
+        sourceFolder.add(source, 'ENABLED').name('Enabled').onFinishChange(createOrUpdateArrowVisuals).listen();
+        
+        // 位置、速度/角度パラメータ: onChange を使うことで、スライダー操作中にリアルタイムで矢印が更新される
+        sourceFolder.add(source, 'X', 0.0, 1.0).name('Position X').onChange(createOrUpdateArrowVisuals).listen();
+        sourceFolder.add(source, 'Y', 0.0, 1.0).name('Position Y').onChange(createOrUpdateArrowVisuals).listen();
+        
+        // Speed/Angle方式を前提とする
+        sourceFolder.add(source, 'SPEED', 0, 500).name('Speed').onChange(createOrUpdateArrowVisuals).listen();
+        sourceFolder.add(source, 'ANGLE', 0, 360).name('Angle (deg)').onChange(createOrUpdateArrowVisuals).listen();
+        
+        // 色と半径: これらも変更時に矢印の見た目を変えたい場合は onChange を追加
+        // 現在の createOrUpdateArrowVisuals は矢印の色をソースの色に、半径は直接使用していないが、将来的に対応可能
+        sourceFolder.add(source, 'R', 0.0, 1.0).name('Color R').onChange(createOrUpdateArrowVisuals).listen();
+        sourceFolder.add(source, 'G', 0.0, 1.0).name('Color G').onChange(createOrUpdateArrowVisuals).listen();
+        sourceFolder.add(source, 'B', 0.0, 1.0).name('Color B').onChange(createOrUpdateArrowVisuals).listen();
+        sourceFolder.add(source, 'RADIUS', 0.01, 1.0).name('Radius').listen(); // 半径は現在矢印の見た目に影響しない
 
-        // Speed/Angle方式の場合
-        sourceFolder.add(source, 'SPEED', 0, 500).name('Speed').listen();
-        sourceFolder.add(source, 'ANGLE', 0, 360).name('Angle (deg)').listen();
-
-        // DX/DY方式の場合 (上記とどちらかを選択)
-        // sourceFolder.add(source, 'DX', -5000, 5000).name('Velocity X').listen();
-        // sourceFolder.add(source, 'DY', -5000, 5000).name('Velocity Y').listen();
-
-        sourceFolder.add(source, 'R', 0.0, 1.0).name('Color R').listen();
-        sourceFolder.add(source, 'G', 0.0, 1.0).name('Color G').listen();
-        sourceFolder.add(source, 'B', 0.0, 1.0).name('Color B').listen();
-        sourceFolder.add(source, 'RADIUS', 0.01, 1.0).name('Radius').listen();
-        // sourceFolder.open(); // 必要ならデフォルトでフォルダを開く
+        // sourceFolder.open(); // 必要に応じてデフォルトでフォルダを開く
     });
-
     let bloomFolder = gui.addFolder('Bloom');
     bloomFolder.add(config, 'BLOOM').name('enabled').onFinishChange(updateKeywords);
     bloomFolder.add(config, 'BLOOM_INTENSITY', 0.1, 2.0).name('intensity');
@@ -1234,7 +1253,8 @@ function updateKeywords () {
 
 updateKeywords();
 initFramebuffers();
-createArrow();
+createOrUpdateArrowVisuals(); // ★ 最初の矢印描画
+addArrowEventListeners();    // ★ イベントリスナー設定 (一度だけ)
 multipleSplats(parseInt(Math.random() * 20) + 5);
 
 let lastUpdateTime = Date.now();
@@ -1565,7 +1585,7 @@ function applyAllSteadyFlows () {
             // シミュレーション内部で力のY成分が正なら上、負なら下と解釈されるようにすることです。
             // 元の STEADY_FLOW_DY = -2000 が上向きだったことから、splatに渡すdyは負の値で上向き。
             // なので、角度90度（sin=1）のとき、dyが負になるようにします。
-            dy = -source.SPEED * Math.sin(angleRad); // 例: 90度で -SPEED
+            dy = source.SPEED * Math.sin(angleRad); // 例: 90度で -SPEED
 
             // DX/DY方式の場合 (上記とどちらかを選択)
             // dx = source.DX;
@@ -1822,132 +1842,187 @@ function createArrow() {
     updateArrowVisuals(); // 初期描画
 }
 
-function updateArrowVisuals() {
-    if (!arrowElement || !config.STEADY_FLOW_ENABLED) {
-        // ... (表示/非表示ロジックは同じ) ...
-        if(arrowElement) arrowElement.style.display = 'none';
-        if(document.getElementById('arrow-position-handle')) document.getElementById('arrow-position-handle').style.display = 'none';
-        if(arrowHandle) arrowHandle.style.display = 'none';
-        return;
-    }
-    arrowElement.style.display = '';
-    document.getElementById('arrow-position-handle').style.display = '';
-    arrowHandle.style.display = '';
+// script.js
 
-    const canvasWidth = canvas.clientWidth;
-    const canvasHeight = canvas.clientHeight;
+function addArrowEventListeners() { // 引数は不要に
+    arrowOverlay.addEventListener('mousedown', (e) => {
+        const target = e.target;
+        const sourceIndex = parseInt(target.getAttribute('data-source-index'));
+        const handleType = target.getAttribute('data-handle-type');
 
-    const startX = config.STEADY_FLOW_X * canvasWidth;
-    const startY = (1.0 - config.STEADY_FLOW_Y) * canvasHeight; // Y座標はSVGでは反転
+        if (isNaN(sourceIndex) || !handleType || !config.STEADY_FLOW_SOURCES[sourceIndex]?.ENABLED) {
+            return;
+        }
 
-    const displayLength = 50; // 矢印の画面上での固定長
-    // 角度をラジアンに変換 (SVGの角度の扱いに注意。通常0度は右、時計回りが正だが、atan2やcos/sinは数学標準)
-    // ここでは数学標準の角度（0度が右、反時計回りが正）でSTEADY_FLOW_ANGLEが設定されていると仮定
-    // SVGのY軸は下向きなので、sinの結果の符号に注意
-    const angleRad = config.STEADY_FLOW_ANGLE * Math.PI / 180.0;
-
-    const endX = startX + displayLength * Math.cos(angleRad);
-    const endY = startY + displayLength * Math.sin(angleRad); // SVG Y軸は下向きなので、数学的な正のYはSVGでは下
-
-    const lineEl = document.getElementById('arrow-line');
-    lineEl.setAttribute('x1', startX);
-    lineEl.setAttribute('y1', startY);
-    lineEl.setAttribute('x2', endX);
-    lineEl.setAttribute('y2', endY);
-
-    const headEl = document.getElementById('arrow-head');
-    // 矢印の頭の向きもangleRadから計算
-    const headAngle = angleRad; // Math.atan2(endY - startY, endX - startX) と同じはず
-    const headLength = 15;
-    const points = [
-        endX, endY,
-        endX - headLength * Math.cos(headAngle - Math.PI / 6), endY - headLength * Math.sin(headAngle - Math.PI / 6),
-        endX - headLength * Math.cos(headAngle + Math.PI / 6), endY - headLength * Math.sin(headAngle + Math.PI / 6)
-    ].join(',');
-    headEl.setAttribute('points', points);
-
-    const posHandle = document.getElementById('arrow-position-handle');
-    posHandle.setAttribute('cx', startX);
-    posHandle.setAttribute('cy', startY);
-
-    arrowHandle.setAttribute('cx', endX);
-    arrowHandle.setAttribute('cy', endY);
-}
-function addArrowEventListeners(positionHandle, directionHandle) {
-    let offsetX, offsetY;
-
-    positionHandle.addEventListener('mousedown', (e) => {
-        if (!config.STEADY_FLOW_ENABLED) return;
-        isDraggingArrowPosition = true;
-        // SVG要素に対する相対位置を計算する必要がある場合がある
-        // ここではclientX/Yを直接使うが、SVGのtransform等に応じて調整
-        offsetX = e.clientX - parseFloat(positionHandle.getAttribute('cx'));
-        offsetY = e.clientY - parseFloat(positionHandle.getAttribute('cy'));
-        arrowOverlay.style.pointerEvents = 'all'; // ドラッグ中はoverlay全体でイベント取得
-    });
-
-    directionHandle.addEventListener('mousedown', (e) => {
-        if (!config.STEADY_FLOW_ENABLED) return;
-        isDraggingArrowDirection = true;
-        arrowOverlay.style.pointerEvents = 'all';
-    });
-
-    arrowOverlay.addEventListener('mousemove', (e) => {
-        if (!config.STEADY_FLOW_ENABLED) return;
+        draggingState.sourceIndex = sourceIndex;
+        const currentSource = config.STEADY_FLOW_SOURCES[sourceIndex];
         const canvasWidth = canvas.clientWidth;
         const canvasHeight = canvas.clientHeight;
 
-        if (isDraggingArrowPosition) {
-            let newSvgX = e.clientX - offsetX; // offsetX, offsetYはmousedownで計算
-            let newSvgY = e.clientY - offsetY;
+        if (handleType === 'position') {
+            draggingState.isDraggingPosition = true;
+            const currentSvgX = currentSource.X * canvasWidth;
+            const currentSvgY = (1.0 - currentSource.Y) * canvasHeight;
+            draggingState.offsetX = e.clientX - currentSvgX;
+            draggingState.offsetY = e.clientY - currentSvgY;
+        } else if (handleType === 'direction') {
+            draggingState.isDraggingDirection = true;
+            // offsetX, offsetY は方向ドラッグでは不要な場合が多い
+        }
+        arrowOverlay.style.pointerEvents = 'all'; // ドラッグ中は overlay 全体でイベントを取得
+        e.stopPropagation(); // 他のイベントへの伝播を止める
+    });
+
+    arrowOverlay.addEventListener('mousemove', (e) => {
+        if (draggingState.sourceIndex === -1) return;
+
+        const source = config.STEADY_FLOW_SOURCES[draggingState.sourceIndex];
+        if (!source || !source.ENABLED) { // ドラッグ中に無効化された場合など
+            draggingState.sourceIndex = -1; // ドラッグをリセット
+            arrowOverlay.style.pointerEvents = 'none';
+            return;
+        }
+
+
+        const canvasWidth = canvas.clientWidth;
+        const canvasHeight = canvas.clientHeight;
+
+        if (draggingState.isDraggingPosition) {
+            let newSvgX = e.clientX - draggingState.offsetX;
+            let newSvgY = e.clientY - draggingState.offsetY;
 
             newSvgX = Math.max(0, Math.min(canvasWidth, newSvgX));
             newSvgY = Math.max(0, Math.min(canvasHeight, newSvgY));
 
-            config.STEADY_FLOW_X = newSvgX / canvasWidth;
-            config.STEADY_FLOW_Y = 1.0 - (newSvgY / canvasHeight); // Y座標の変換
+            source.X = newSvgX / canvasWidth;
+            source.Y = 1.0 - (newSvgY / canvasHeight); // Y座標の変換
 
-            updateArrowVisuals();
-        } else if (isDraggingArrowDirection) {
-            const startX = config.STEADY_FLOW_X * canvasWidth;
-            const startY = (1.0 - config.STEADY_FLOW_Y) * canvasHeight; // SVG座標での始点
+            createOrUpdateArrowVisuals(); // GUIのlisten()が更新
+        } else if (draggingState.isDraggingDirection) {
+            const startX_svg = source.X * canvasWidth;
+            const startY_svg = (1.0 - source.Y) * canvasHeight;
 
-            let currentMouseX = e.clientX;
-            let currentMouseY = e.clientY;
+            let currentMouseX_svg = e.clientX;
+            let currentMouseY_svg = e.clientY;
 
-            // ベクトル計算
-            let dirX = currentMouseX - startX;
-            let dirY = currentMouseY - startY; // SVG座標系でのY方向 (下向きが正)
+            let dirX_svg = currentMouseX_svg - startX_svg;
+            let dirY_svg = currentMouseY_svg - startY_svg;
 
-            // atan2で角度を計算 (ラジアン)
-            // Math.atan2(y, x) は -PI から PI の範囲で角度を返す
-            let angleRad = Math.atan2(dirY, dirX);
+            // Y軸反転を考慮して数学的な角度を計算 (0度右、90度上)
+            let angleRad_math = Math.atan2(-dirY_svg, dirX_svg);
+            let angleDeg_math = angleRad_math * 180 / Math.PI;
+            angleDeg_math = (angleDeg_math + 360) % 360; // 0-360に正規化
 
-            // 角度を度数法に変換 (0-360度)
-            let angleDeg = angleRad * 180 / Math.PI;
-            if (angleDeg < 0) {
-                angleDeg += 360; // 角度を0-360の範囲に正規化
-            }
+            source.ANGLE = angleDeg_math;
 
-            config.STEADY_FLOW_ANGLE = angleDeg;
-
-            updateArrowVisuals();
+            createOrUpdateArrowVisuals(); // GUIのlisten()が更新
         }
     });
 
     arrowOverlay.addEventListener('mouseup', () => {
-        isDraggingArrowPosition = false;
-        isDraggingArrowDirection = false;
-        if (!config.STEADY_FLOW_ENABLED || !(isDraggingArrowPosition || isDraggingArrowDirection)) {
-             arrowOverlay.style.pointerEvents = 'none'; // ドラッグ終了後は元のSVG要素のみイベント取得
+        if (draggingState.sourceIndex !== -1) {
+            draggingState.sourceIndex = -1;
+            draggingState.isDraggingPosition = false;
+            draggingState.isDraggingDirection = false;
+            arrowOverlay.style.pointerEvents = 'none'; // 通常はoverlayはイベントを無視
+            // ただし、ハンドル自体は pointerEvents = 'all' にしておく
+            // ハンドル要素に mousedown リスナーを設定する方が良いかもしれない
         }
     });
-     arrowOverlay.addEventListener('mouseleave', () => { // canvas外に出た場合もドラッグ終了
-        if (isDraggingArrowPosition || isDraggingArrowDirection) {
-            isDraggingArrowPosition = false;
-            isDraggingArrowDirection = false;
-             arrowOverlay.style.pointerEvents = 'none';
+
+    arrowOverlay.addEventListener('mouseleave', () => {
+        if (draggingState.sourceIndex !== -1) {
+            // mouseup と同様の処理
+            draggingState.sourceIndex = -1;
+            draggingState.isDraggingPosition = false;
+            draggingState.isDraggingDirection = false;
+            arrowOverlay.style.pointerEvents = 'none';
         }
     });
 }
+// script.js
 
+function createOrUpdateArrowVisuals() {
+    if (!arrowOverlay) return; // SVGオーバーレイがない場合は何もしない
+
+    // 既存の矢印関連要素を一度クリア（または更新ロジックをより洗練させる）
+    while (arrowOverlay.firstChild) {
+        arrowOverlay.removeChild(arrowOverlay.firstChild);
+    }
+
+    config.STEADY_FLOW_SOURCES.forEach((source, index) => {
+        if (!source.ENABLED) {
+            return; // 無効なソースは描画しない
+        }
+
+        const canvasWidth = canvas.clientWidth;
+        const canvasHeight = canvas.clientHeight;
+
+        // configのYは0が下、1が上。SVGのYは0が上、heightが下。
+        const startX_svg = source.X * canvasWidth;
+        const startY_svg = (1.0 - source.Y) * canvasHeight;
+
+        const displayLength = 50; // 矢印の画面上の固定長
+        const angleRad_math = source.ANGLE * Math.PI / 180.0; // 数学的な角度
+
+        // SVG座標系での終点計算 (Y軸反転を考慮)
+        const endX_svg = startX_svg + displayLength * Math.cos(angleRad_math);
+        const endY_svg = startY_svg - displayLength * Math.sin(angleRad_math); // 数学的なY+はSVGではY-
+
+        // 矢印グループ
+        const arrowGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        arrowGroup.setAttribute('data-source-index', index);
+        arrowOverlay.appendChild(arrowGroup);
+
+        // 線
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute('x1', startX_svg);
+        line.setAttribute('y1', startY_svg);
+        line.setAttribute('x2', endX_svg);
+        line.setAttribute('y2', endY_svg);
+        line.setAttribute('stroke', `rgba(${source.R * 255}, ${source.G * 255}, ${source.B * 255}, 0.7)`); // ソースの色を使用
+        line.setAttribute('stroke-width', '3');
+        arrowGroup.appendChild(line);
+
+        // 矢頭
+        const head = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+        const headAngle_svg = Math.atan2(endY_svg - startY_svg, endX_svg - startX_svg);
+        const headLength = 15;
+        const points = [
+            endX_svg, endY_svg,
+            endX_svg - headLength * Math.cos(headAngle_svg - Math.PI / 6), endY_svg - headLength * Math.sin(headAngle_svg - Math.PI / 6),
+            endX_svg - headLength * Math.cos(headAngle_svg + Math.PI / 6), endY_svg - headLength * Math.sin(headAngle_svg + Math.PI / 6)
+        ].join(',');
+        head.setAttribute('points', points);
+        head.setAttribute('fill', `rgba(${source.R * 255}, ${source.G * 255}, ${source.B * 255}, 0.7)`);
+        arrowGroup.appendChild(head);
+
+        // 位置操作ハンドル
+        const positionHandle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        positionHandle.setAttribute('cx', startX_svg);
+        positionHandle.setAttribute('cy', startY_svg);
+        positionHandle.setAttribute('r', '10');
+        positionHandle.setAttribute('fill', 'rgba(0, 150, 255, 0.5)');
+        positionHandle.setAttribute('stroke', 'white');
+        positionHandle.setAttribute('stroke-width', '2');
+        positionHandle.style.pointerEvents = 'all';
+        positionHandle.style.cursor = 'move';
+        positionHandle.setAttribute('data-source-index', index); // インデックスを付与
+        positionHandle.setAttribute('data-handle-type', 'position'); // ハンドルの種類
+        arrowOverlay.appendChild(positionHandle); // グループではなく直接overlayに追加して重なり順を制御
+
+        // 方向操作ハンドル
+        const directionHandle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        directionHandle.setAttribute('cx', endX_svg);
+        directionHandle.setAttribute('cy', endY_svg);
+        directionHandle.setAttribute('r', '8');
+        directionHandle.setAttribute('fill', 'rgba(255, 100, 0, 0.5)');
+        directionHandle.setAttribute('stroke', 'white');
+        directionHandle.setAttribute('stroke-width', '2');
+        directionHandle.style.pointerEvents = 'all';
+        directionHandle.style.cursor = 'crosshair';
+        directionHandle.setAttribute('data-source-index', index); // インデックスを付与
+        directionHandle.setAttribute('data-handle-type', 'direction'); // ハンドルの種類
+        arrowOverlay.appendChild(directionHandle); // グループではなく直接overlayに追加
+    });
+}
