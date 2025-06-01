@@ -94,6 +94,12 @@ let config = {
     STEADY_FLOW_RADIUS: 0.1,       // Radius of the source (similar scale to SPLAT_RADIUS)
 }
 
+const arrowOverlay = document.getElementById('arrow-overlay');
+let arrowElement = null; // SVGの矢印要素を保持
+let arrowHandle = null; // 矢印の向きを操作するハンドル
+let isDraggingArrowPosition = false;
+let isDraggingArrowDirection = false;
+
 function pointerPrototype () {
     this.id = -1;
     this.texcoordX = 0;
@@ -234,15 +240,15 @@ function startGUI () {
 
     // Add new GUI Folder for Steady Flow
     let steadyFlowFolder = gui.addFolder('Steady Flow Source');
-    steadyFlowFolder.add(config, 'STEADY_FLOW_ENABLED').name('Enabled');
-    steadyFlowFolder.add(config, 'STEADY_FLOW_X', 0.0, 1.0).name('Position X');
-    steadyFlowFolder.add(config, 'STEADY_FLOW_Y', 0.0, 1.0).name('Position Y');
-    steadyFlowFolder.add(config, 'STEADY_FLOW_DX', -100, 100).name('Velocity X');
-    steadyFlowFolder.add(config, 'STEADY_FLOW_DY', -100, 100).name('Velocity Y');
-    steadyFlowFolder.add(config, 'STEADY_FLOW_R', 0.0, 1.0).name('Color R');
-    steadyFlowFolder.add(config, 'STEADY_FLOW_G', 0.0, 1.0).name('Color G');
-    steadyFlowFolder.add(config, 'STEADY_FLOW_B', 0.0, 1.0).name('Color B');
-    steadyFlowFolder.add(config, 'STEADY_FLOW_RADIUS', 0.01, 1.0).name('Radius');
+    steadyFlowFolder.add(config, 'STEADY_FLOW_ENABLED').name('Enabled').onFinishChange(updateArrowVisuals); // 矢印表示/非表示のため
+    steadyFlowFolder.add(config, 'STEADY_FLOW_X', 0.0, 1.0).name('Position X').onChange(updateArrowVisuals).listen();
+    steadyFlowFolder.add(config, 'STEADY_FLOW_Y', 0.0, 1.0).name('Position Y').onChange(updateArrowVisuals).listen();
+    steadyFlowFolder.add(config, 'STEADY_FLOW_DX', -100, 100).name('Velocity X').onChange(updateArrowVisuals).listen();
+    steadyFlowFolder.add(config, 'STEADY_FLOW_DY', -100, 100).name('Velocity Y').onChange(updateArrowVisuals).listen();
+    steadyFlowFolder.add(config, 'STEADY_FLOW_R', 0.0, 1.0).name('Color R').listen(); // 色は矢印の見た目に直接影響しないのでonChangeは任意
+    steadyFlowFolder.add(config, 'STEADY_FLOW_G', 0.0, 1.0).name('Color G').listen();
+    steadyFlowFolder.add(config, 'STEADY_FLOW_B', 0.0, 1.0).name('Color B').listen();
+    steadyFlowFolder.add(config, 'STEADY_FLOW_RADIUS', 0.01, 1.0).name('Radius').listen(); // 半径も矢印の見た目に影響しないのでonChangeは任意
 
     let bloomFolder = gui.addFolder('Bloom');
     bloomFolder.add(config, 'BLOOM').name('enabled').onFinishChange(updateKeywords);
@@ -1189,6 +1195,7 @@ function updateKeywords () {
 
 updateKeywords();
 initFramebuffers();
+createArrow();
 multipleSplats(parseInt(Math.random() * 20) + 5);
 
 let lastUpdateTime = Date.now();
@@ -1695,3 +1702,174 @@ function hashCode (s) {
     }
     return hash;
 };
+function createArrow() {
+    // 矢印の<g>要素を作成
+    arrowElement = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    arrowOverlay.appendChild(arrowElement);
+
+    // 矢印の線 (始点から本体)
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    line.setAttribute('id', 'arrow-line');
+    line.setAttribute('stroke', 'rgba(255, 255, 255, 0.7)');
+    line.setAttribute('stroke-width', '3');
+    arrowElement.appendChild(line);
+
+    // 矢印の頭 (三角形)
+    const head = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+    head.setAttribute('id', 'arrow-head');
+    head.setAttribute('fill', 'rgba(255, 255, 255, 0.7)');
+    arrowElement.appendChild(head);
+
+    // 位置操作ハンドル (円)
+    const positionHandle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    positionHandle.setAttribute('id', 'arrow-position-handle');
+    positionHandle.setAttribute('r', '10');
+    positionHandle.setAttribute('fill', 'rgba(0, 150, 255, 0.5)');
+    positionHandle.setAttribute('stroke', 'white');
+    positionHandle.setAttribute('stroke-width', '2');
+    positionHandle.style.pointerEvents = 'all'; // これでイベントを取得
+    positionHandle.style.cursor = 'move';
+    arrowOverlay.appendChild(positionHandle);
+
+
+    // 方向操作ハンドル (円) - 矢印の先端に配置
+    arrowHandle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    arrowHandle.setAttribute('id', 'arrow-direction-handle');
+    arrowHandle.setAttribute('r', '8');
+    arrowHandle.setAttribute('fill', 'rgba(255, 100, 0, 0.5)');
+    arrowHandle.setAttribute('stroke', 'white');
+    arrowHandle.setAttribute('stroke-width', '2');
+    arrowHandle.style.pointerEvents = 'all';
+    arrowHandle.style.cursor = 'crosshair';
+    arrowOverlay.appendChild(arrowHandle);
+
+
+    // イベントリスナーの追加 (後述)
+    addArrowEventListeners(positionHandle, arrowHandle);
+
+    updateArrowVisuals(); // 初期描画
+}
+
+function updateArrowVisuals() {
+    if (!arrowElement || !config.STEADY_FLOW_ENABLED) { // STEADY_FLOW_ENABLED もしくは専用の表示フラグで制御
+        if(arrowElement) arrowElement.style.display = 'none';
+        if(document.getElementById('arrow-position-handle')) document.getElementById('arrow-position-handle').style.display = 'none';
+        if(arrowHandle) arrowHandle.style.display = 'none';
+        return;
+    }
+    arrowElement.style.display = '';
+    document.getElementById('arrow-position-handle').style.display = '';
+    arrowHandle.style.display = '';
+
+
+    const canvasWidth = canvas.clientWidth; // clientWidth を使う
+    const canvasHeight = canvas.clientHeight;
+
+    const startX = config.STEADY_FLOW_X * canvasWidth;
+    const startY = (1.0 - config.STEADY_FLOW_Y) * canvasHeight; // Y座標は反転しているため
+
+    // 速度ベクトルから終点を計算 (スケール調整が必要)
+    const forceScale = 0.05; // この値を調整して矢印の長さを制御
+    let endX = startX + config.STEADY_FLOW_DX * forceScale;
+    let endY = startY - config.STEADY_FLOW_DY * forceScale; // DYは上向きが正なのでSVGでは減算
+
+    // 画面外に出すぎないように簡易クリッピング (オプション)
+    endX = Math.max(0, Math.min(canvasWidth, endX));
+    endY = Math.max(0, Math.min(canvasHeight, endY));
+
+    const lineEl = document.getElementById('arrow-line');
+    lineEl.setAttribute('x1', startX);
+    lineEl.setAttribute('y1', startY);
+    lineEl.setAttribute('x2', endX);
+    lineEl.setAttribute('y2', endY);
+
+    // 矢印の頭の描画 (三角形の頂点計算)
+    const headEl = document.getElementById('arrow-head');
+    const angle = Math.atan2(endY - startY, endX - startX);
+    const headLength = 15; // 矢頭の大きさ
+    const points = [
+        endX, endY,
+        endX - headLength * Math.cos(angle - Math.PI / 6), endY - headLength * Math.sin(angle - Math.PI / 6),
+        endX - headLength * Math.cos(angle + Math.PI / 6), endY - headLength * Math.sin(angle + Math.PI / 6)
+    ].join(',');
+    headEl.setAttribute('points', points);
+
+    // ハンドルの位置更新
+    const posHandle = document.getElementById('arrow-position-handle');
+    posHandle.setAttribute('cx', startX);
+    posHandle.setAttribute('cy', startY);
+
+    arrowHandle.setAttribute('cx', endX);
+    arrowHandle.setAttribute('cy', endY);
+}
+function addArrowEventListeners(positionHandle, directionHandle) {
+    let offsetX, offsetY;
+
+    positionHandle.addEventListener('mousedown', (e) => {
+        if (!config.STEADY_FLOW_ENABLED) return;
+        isDraggingArrowPosition = true;
+        // SVG要素に対する相対位置を計算する必要がある場合がある
+        // ここではclientX/Yを直接使うが、SVGのtransform等に応じて調整
+        offsetX = e.clientX - parseFloat(positionHandle.getAttribute('cx'));
+        offsetY = e.clientY - parseFloat(positionHandle.getAttribute('cy'));
+        arrowOverlay.style.pointerEvents = 'all'; // ドラッグ中はoverlay全体でイベント取得
+    });
+
+    directionHandle.addEventListener('mousedown', (e) => {
+        if (!config.STEADY_FLOW_ENABLED) return;
+        isDraggingArrowDirection = true;
+        arrowOverlay.style.pointerEvents = 'all';
+    });
+
+    arrowOverlay.addEventListener('mousemove', (e) => {
+        if (!config.STEADY_FLOW_ENABLED) return;
+        const canvasWidth = canvas.clientWidth;
+        const canvasHeight = canvas.clientHeight;
+
+        if (isDraggingArrowPosition) {
+            let newSvgX = e.clientX - offsetX;
+            let newSvgY = e.clientY - offsetY;
+
+            // Canvas境界内に制限 (オプション)
+            newSvgX = Math.max(0, Math.min(canvasWidth, newSvgX));
+            newSvgY = Math.max(0, Math.min(canvasHeight, newSvgY));
+
+            config.STEADY_FLOW_X = newSvgX / canvasWidth;
+            config.STEADY_FLOW_Y = 1.0 - (newSvgY / canvasHeight); // Y座標の変換
+
+            updateArrowVisuals();
+        } else if (isDraggingArrowDirection) {
+            const startX = config.STEADY_FLOW_X * canvasWidth;
+            const startY = (1.0 - config.STEADY_FLOW_Y) * canvasHeight;
+
+            let currentMouseX = e.clientX;
+            let currentMouseY = e.clientY;
+
+            // Canvas境界内に制限 (オプション)
+            currentMouseX = Math.max(0, Math.min(canvasWidth, currentMouseX));
+            currentMouseY = Math.max(0, Math.min(canvasHeight, currentMouseY));
+
+            const forceScale = 0.05; // updateArrowVisualsと合わせる
+            config.STEADY_FLOW_DX = (currentMouseX - startX) / forceScale;
+            config.STEADY_FLOW_DY = -(currentMouseY - startY) / forceScale; // DYの向き注意
+
+            updateArrowVisuals();
+        }
+    });
+
+    arrowOverlay.addEventListener('mouseup', () => {
+        isDraggingArrowPosition = false;
+        isDraggingArrowDirection = false;
+        if (!config.STEADY_FLOW_ENABLED || !(isDraggingArrowPosition || isDraggingArrowDirection)) {
+             arrowOverlay.style.pointerEvents = 'none'; // ドラッグ終了後は元のSVG要素のみイベント取得
+        }
+    });
+     arrowOverlay.addEventListener('mouseleave', () => { // canvas外に出た場合もドラッグ終了
+        if (isDraggingArrowPosition || isDraggingArrowDirection) {
+            isDraggingArrowPosition = false;
+            isDraggingArrowDirection = false;
+             arrowOverlay.style.pointerEvents = 'none';
+        }
+    });
+}
+
