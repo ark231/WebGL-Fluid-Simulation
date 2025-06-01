@@ -255,6 +255,12 @@ function startGUI () {
     steadyFlowFolder.add(config, 'STEADY_FLOW_B', 0.0, 1.0).name('Color B').listen();
     steadyFlowFolder.add(config, 'STEADY_FLOW_RADIUS', 0.01, 1.0).name('Radius').listen(); // 半径も矢印の見た目に影響しないのでonChangeは任意
 
+    let obstacleFolder = gui.addFolder('Obstacle');
+    obstacleFolder.add(config, 'OBSTACLE_ENABLED').name('Enabled').onFinishChange(updateObstacleMask); // 有効/無効でもマスク更新
+    obstacleFolder.add(config, 'OBSTACLE_X', 0.0, 1.0).name('Center X').onFinishChange(updateObstacleMask).listen();
+    obstacleFolder.add(config, 'OBSTACLE_Y', 0.0, 1.0).name('Center Y').onFinishChange(updateObstacleMask).listen();
+    obstacleFolder.add(config, 'OBSTACLE_RADIUS', 0.01, 0.5).name('Radius').onFinishChange(updateObstacleMask).listen();
+
     let bloomFolder = gui.addFolder('Bloom');
     bloomFolder.add(config, 'BLOOM').name('enabled').onFinishChange(updateKeywords);
     bloomFolder.add(config, 'BLOOM_INTENSITY', 0.1, 2.0).name('intensity');
@@ -941,7 +947,8 @@ const pressureShader = compileShader(gl.FRAGMENT_SHADER, `
     void main () {
         // 現在のセルが障害物の場合、圧力を更新しない
         if (texture2D(uObstacleMask, vUv).r > 0.5) {
-            gl_FragColor = texture2D(uPressure, vUv); // 現在の圧力を維持
+            // gl_FragColor = texture2D(uPressure, vUv); // 現在の圧力を維持
+            gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); // 障害物内部の圧力を0に
             return;
         }
 
@@ -1061,7 +1068,6 @@ function CHECK_FRAMEBUFFER_STATUS () {
         console.trace("Framebuffer error: " + status);
 }
 
-let obstacleMaskFBO; // これはFBOなので後で作成
 let drawObstacleProgram;
 let applyMaskProgram;
 
@@ -1074,6 +1080,7 @@ let bloom;
 let bloomFramebuffers = [];
 let sunrays;
 let sunraysTemp;
+let obstacleMaskFBO; // これはFBOなので後で作成
 
 let ditheringTexture = createTextureAsync('LDR_LLL1_0.png');
 
@@ -1094,8 +1101,8 @@ const curlProgram            = new Program(baseVertexShader, curlShader);
 const vorticityProgram       = new Program(baseVertexShader, vorticityShader);
 const pressureProgram        = new Program(baseVertexShader, pressureShader);
 const gradienSubtractProgram = new Program(baseVertexShader, gradientSubtractShader);
-const drawObstacleProgram = new Program(baseVertexShader, compileShader(gl.FRAGMENT_SHADER, drawObstacleShaderSource));
-const applyMaskProgram = new Program(baseVertexShader, compileShader(gl.FRAGMENT_SHADER, applyMaskShaderSource));
+drawObstacleProgram          = new Program(baseVertexShader, compileShader(gl.FRAGMENT_SHADER, drawObstacleShaderSource));
+applyMaskProgram             = new Program(baseVertexShader, compileShader(gl.FRAGMENT_SHADER, applyMaskShaderSource));
 
 const displayMaterial = new Material(baseVertexShader, displayShaderSource);
 
@@ -1125,6 +1132,13 @@ function initFramebuffers () {
     curl       = createFBO      (simRes.width, simRes.height, r.internalFormat, r.format, texType, gl.NEAREST);
     pressure   = createDoubleFBO(simRes.width, simRes.height, r.internalFormat, r.format, texType, gl.NEAREST);
 
+    // ★障害物マスクFBOの初期化/リサイズ
+    // マスクは通常Rチャネルのみで十分なので、formatRを使用。解像度はsimRes。フィルタリングはNEAREST。
+    if (obstacleMaskFBO == null) {
+        obstacleMaskFBO = createFBO(simRes.width, simRes.height, r.internalFormat, r.format, texType, gl.NEAREST);
+    } else {
+        obstacleMaskFBO = resizeFBO(obstacleMaskFBO, simRes.width, simRes.height, r.internalFormat, r.format, texType, gl.NEAREST);
+    }
     initBloomFramebuffers();
     initSunraysFramebuffers();
 }
@@ -1351,71 +1365,230 @@ function applyInputs () {
     });
 }
 
+// function step (dt) {
+//     gl.disable(gl.BLEND);
+//
+//     curlProgram.bind();
+//     gl.uniform2f(curlProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+//     gl.uniform1i(curlProgram.uniforms.uVelocity, velocity.read.attach(0));
+//     blit(curl);
+//     
+//     // ★渦度計算後の速度に障害物マスク適用
+//     if (config.OBSTACLE_ENABLED) {
+//         applyMaskProgram.bind();
+//         gl.uniform1i(applyMaskProgram.uniforms.uTarget, velocity.read.attach(0));
+//         gl.uniform1i(applyMaskProgram.uniforms.uObstacleMask, obstacleMaskFBO.attach(1));
+//         blit(velocity.write);
+//         velocity.swap();
+//     }
+//
+//     vorticityProgram.bind();
+//     gl.uniform2f(vorticityProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+//     gl.uniform1i(vorticityProgram.uniforms.uVelocity, velocity.read.attach(0));
+//     gl.uniform1i(vorticityProgram.uniforms.uCurl, curl.attach(1));
+//     gl.uniform1f(vorticityProgram.uniforms.curl, config.CURL);
+//     gl.uniform1f(vorticityProgram.uniforms.dt, dt);
+//     blit(velocity.write);
+//     velocity.swap();
+//
+//     divergenceProgram.bind();
+//     gl.uniform2f(divergenceProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+//     gl.uniform1i(divergenceProgram.uniforms.uVelocity, velocity.read.attach(0));
+//     blit(divergence);
+//
+//     clearProgram.bind();
+//     gl.uniform1i(clearProgram.uniforms.uTexture, pressure.read.attach(0));
+//     gl.uniform1f(clearProgram.uniforms.value, config.PRESSURE);
+//     blit(pressure.write);
+//     pressure.swap();
+//
+//     pressureProgram.bind();
+//     gl.uniform2f(pressureProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+//     gl.uniform1i(pressureProgram.uniforms.uDivergence, divergence.attach(0));
+//
+//     if (config.OBSTACLE_ENABLED) { // ★障害物マスクを渡す
+//         gl.uniform1i(pressureProgram.uniforms.uObstacleMask, obstacleMaskFBO.attach(2)); // テクスチャユニット2を使用
+//     } else {
+//         // OBSTACLE_ENABLEDでなければ、ダミーの空マスク（全て0）を渡すか、
+//         // シェーダー内で isObstacle > 0.5 が常にfalseになるようにする。
+//         // 簡単なのは、全て0でクリアされたテクスチャを渡すこと。
+//         // もしそのようなテクスチャがなければ、uniformでフラグを渡しシェーダー内で分岐する。
+//         // ここでは、OBSTACLE_ENABLEDがfalseならuObstacleMaskへの設定をスキップし、
+//         // シェーダー側でuniformが未設定の場合のデフォルト挙動に依存するか、
+//         // または明示的に「障害物なし」を示すテクスチャ（例：全体が0のテクスチャ）をバインドする。
+//         // 今回は、シェーダーがuObstacleMaskを参照する前に有効かどうかをJSで確認。
+//     }
+//     for (let i = 0; i < config.PRESSURE_ITERATIONS; i++) {
+//         gl.uniform1i(pressureProgram.uniforms.uPressure, pressure.read.attach(1));
+//         blit(pressure.write);
+//         pressure.swap();
+//     }
+//
+//     gradienSubtractProgram.bind();
+//     gl.uniform2f(gradienSubtractProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+//     gl.uniform1i(gradienSubtractProgram.uniforms.uPressure, pressure.read.attach(0));
+//     gl.uniform1i(gradienSubtractProgram.uniforms.uVelocity, velocity.read.attach(1));
+//     blit(velocity.write);
+//     velocity.swap();
+//
+//     advectionProgram.bind();
+//     gl.uniform2f(advectionProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
+//     if (!ext.supportLinearFiltering)
+//         gl.uniform2f(advectionProgram.uniforms.dyeTexelSize, velocity.texelSizeX, velocity.texelSizeY);
+//     let velocityId = velocity.read.attach(0);
+//     gl.uniform1i(advectionProgram.uniforms.uVelocity, velocityId);
+//     gl.uniform1i(advectionProgram.uniforms.uSource, velocityId);
+//     gl.uniform1f(advectionProgram.uniforms.dt, dt);
+//     gl.uniform1f(advectionProgram.uniforms.dissipation, config.VELOCITY_DISSIPATION);
+//     blit(velocity.write);
+//     velocity.swap();
+//
+//     // ★移流後の速度に障害物マスク適用
+//     if (config.OBSTACLE_ENABLED) {
+//         applyMaskProgram.bind();
+//         gl.uniform1i(applyMaskProgram.uniforms.uTarget, velocity.read.attach(0));
+//         gl.uniform1i(applyMaskProgram.uniforms.uObstacleMask, obstacleMaskFBO.attach(1));
+//         blit(velocity.write);
+//         velocity.swap();
+//     }
+//     if (!ext.supportLinearFiltering)
+//         gl.uniform2f(advectionProgram.uniforms.dyeTexelSize, dye.texelSizeX, dye.texelSizeY);
+//     gl.uniform1i(advectionProgram.uniforms.uVelocity, velocity.read.attach(0));
+//     gl.uniform1i(advectionProgram.uniforms.uSource, dye.read.attach(1));
+//     gl.uniform1f(advectionProgram.uniforms.dissipation, config.DENSITY_DISSIPATION);
+//     blit(dye.write);
+//     dye.swap();
+//
+//     // ★染料フィールドに障害物マスクを適用
+//     if (config.OBSTACLE_ENABLED) {
+//         applyMaskProgram.bind();
+//         gl.uniform1i(applyMaskProgram.uniforms.uTarget, dye.read.attach(0));
+//         gl.uniform1i(applyMaskProgram.uniforms.uObstacleMask, obstacleMaskFBO.attach(1));
+//         blit(dye.write);
+//         dye.swap();
+//     }
+// }
+ 
+// script.js
+
+// (ここまでに config, gl, ext, FBOs (dye, velocity, obstacleMaskFBO 等),
+// Programs (applyMaskProgram, pressureProgram 等) の定義と初期化が完了しているとする)
+
 function step (dt) {
-    gl.disable(gl.BLEND);
+    gl.disable(gl.BLEND); //
 
-    curlProgram.bind();
-    gl.uniform2f(curlProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
-    gl.uniform1i(curlProgram.uniforms.uVelocity, velocity.read.attach(0));
-    blit(curl);
+    // --- 1. Curl & Vorticity (速度場を変更) ---
+    curlProgram.bind(); //
+    gl.uniform2f(curlProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY); //
+    gl.uniform1i(curlProgram.uniforms.uVelocity, velocity.read.attach(0)); //
+    blit(curl); //
 
-    vorticityProgram.bind();
-    gl.uniform2f(vorticityProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
-    gl.uniform1i(vorticityProgram.uniforms.uVelocity, velocity.read.attach(0));
-    gl.uniform1i(vorticityProgram.uniforms.uCurl, curl.attach(1));
-    gl.uniform1f(vorticityProgram.uniforms.curl, config.CURL);
-    gl.uniform1f(vorticityProgram.uniforms.dt, dt);
-    blit(velocity.write);
-    velocity.swap();
+    vorticityProgram.bind(); //
+    gl.uniform2f(vorticityProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY); //
+    gl.uniform1i(vorticityProgram.uniforms.uVelocity, velocity.read.attach(0)); //
+    gl.uniform1i(vorticityProgram.uniforms.uCurl, curl.attach(1)); //
+    gl.uniform1f(vorticityProgram.uniforms.curl, config.CURL); //
+    gl.uniform1f(vorticityProgram.uniforms.dt, dt); //
+    blit(velocity.write); //
+    velocity.swap(); //
 
-    divergenceProgram.bind();
-    gl.uniform2f(divergenceProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
-    gl.uniform1i(divergenceProgram.uniforms.uVelocity, velocity.read.attach(0));
-    blit(divergence);
-
-    clearProgram.bind();
-    gl.uniform1i(clearProgram.uniforms.uTexture, pressure.read.attach(0));
-    gl.uniform1f(clearProgram.uniforms.value, config.PRESSURE);
-    blit(pressure.write);
-    pressure.swap();
-
-    pressureProgram.bind();
-    gl.uniform2f(pressureProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
-    gl.uniform1i(pressureProgram.uniforms.uDivergence, divergence.attach(0));
-    for (let i = 0; i < config.PRESSURE_ITERATIONS; i++) {
-        gl.uniform1i(pressureProgram.uniforms.uPressure, pressure.read.attach(1));
-        blit(pressure.write);
-        pressure.swap();
+    // ★ 障害物マスク適用 (Vorticity適用後)
+    if (config.OBSTACLE_ENABLED) {
+        applyMaskProgram.bind();
+        gl.uniform1i(applyMaskProgram.uniforms.uTarget, velocity.read.attach(0));
+        gl.uniform1i(applyMaskProgram.uniforms.uObstacleMask, obstacleMaskFBO.attach(1)); // テクスチャユニット1を使用
+        blit(velocity.write);
+        velocity.swap();
     }
 
-    gradienSubtractProgram.bind();
-    gl.uniform2f(gradienSubtractProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
-    gl.uniform1i(gradienSubtractProgram.uniforms.uPressure, pressure.read.attach(0));
-    gl.uniform1i(gradienSubtractProgram.uniforms.uVelocity, velocity.read.attach(1));
-    blit(velocity.write);
-    velocity.swap();
+    // --- 2. Divergence (速度場から発散を計算) ---
+    divergenceProgram.bind(); //
+    gl.uniform2f(divergenceProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY); //
+    gl.uniform1i(divergenceProgram.uniforms.uVelocity, velocity.read.attach(0)); //
+    // divergenceShader が uObstacleMask を使用するよう修正されていれば、ここで渡す
+    // if (config.OBSTACLE_ENABLED) {
+    //    gl.uniform1i(divergenceProgram.uniforms.uObstacleMask, obstacleMaskFBO.attach(X)); // 適切なユニット
+    // }
+    blit(divergence); //
 
-    advectionProgram.bind();
-    gl.uniform2f(advectionProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY);
-    if (!ext.supportLinearFiltering)
-        gl.uniform2f(advectionProgram.uniforms.dyeTexelSize, velocity.texelSizeX, velocity.texelSizeY);
-    let velocityId = velocity.read.attach(0);
-    gl.uniform1i(advectionProgram.uniforms.uVelocity, velocityId);
-    gl.uniform1i(advectionProgram.uniforms.uSource, velocityId);
-    gl.uniform1f(advectionProgram.uniforms.dt, dt);
-    gl.uniform1f(advectionProgram.uniforms.dissipation, config.VELOCITY_DISSIPATION);
-    blit(velocity.write);
-    velocity.swap();
+    // --- 3. Pressure Solve (発散を元に圧力を計算) ---
+    clearProgram.bind(); //
+    gl.uniform1i(clearProgram.uniforms.uTexture, pressure.read.attach(0)); //
+    gl.uniform1f(clearProgram.uniforms.value, config.PRESSURE); //
+    blit(pressure.write); //
+    pressure.swap(); //
 
-    if (!ext.supportLinearFiltering)
-        gl.uniform2f(advectionProgram.uniforms.dyeTexelSize, dye.texelSizeX, dye.texelSizeY);
-    gl.uniform1i(advectionProgram.uniforms.uVelocity, velocity.read.attach(0));
-    gl.uniform1i(advectionProgram.uniforms.uSource, dye.read.attach(1));
-    gl.uniform1f(advectionProgram.uniforms.dissipation, config.DENSITY_DISSIPATION);
-    blit(dye.write);
-    dye.swap();
+    pressureProgram.bind(); //
+    gl.uniform2f(pressureProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY); //
+    gl.uniform1i(pressureProgram.uniforms.uDivergence, divergence.attach(0)); //
+    // ★ 障害物マスクを pressureProgram に渡す
+    // obstacleMaskFBO は、障害物が無効なら全面0になっている想定
+    gl.uniform1i(pressureProgram.uniforms.uObstacleMask, obstacleMaskFBO.attach(2)); // テクスチャユニット2を使用
+
+    for (let i = 0; i < config.PRESSURE_ITERATIONS; i++) { //
+        gl.uniform1i(pressureProgram.uniforms.uPressure, pressure.read.attach(1)); // uPressureはユニット1を使用
+        blit(pressure.write); //
+        pressure.swap(); //
+    }
+
+    // --- 4. Gradient Subtract (圧力勾配を速度場から引く) ---
+    gradienSubtractProgram.bind(); //
+    gl.uniform2f(gradienSubtractProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY); //
+    gl.uniform1i(gradienSubtractProgram.uniforms.uPressure, pressure.read.attach(0)); //
+    gl.uniform1i(gradienSubtractProgram.uniforms.uVelocity, velocity.read.attach(1)); //
+    blit(velocity.write); //
+    velocity.swap(); //
+
+    // ★ 障害物マスク適用 (Gradient Subtract適用後、これが最も重要)
+    // これにより、圧力補正後の速度場に対して、障害物境界での速度をゼロ（no-slip）にする
+    if (config.OBSTACLE_ENABLED) {
+        applyMaskProgram.bind();
+        gl.uniform1i(applyMaskProgram.uniforms.uTarget, velocity.read.attach(0));
+        gl.uniform1i(applyMaskProgram.uniforms.uObstacleMask, obstacleMaskFBO.attach(1));
+        blit(velocity.write);
+        velocity.swap();
+    }
+
+    // --- 5. Advection of Velocity (速度自身の移流) ---
+    advectionProgram.bind(); //
+    gl.uniform2f(advectionProgram.uniforms.texelSize, velocity.texelSizeX, velocity.texelSizeY); //
+    if (!ext.supportLinearFiltering) //
+        gl.uniform2f(advectionProgram.uniforms.dyeTexelSize, velocity.texelSizeX, velocity.texelSizeY); // Advecting velocity, so use velocity's texel size for source
+    let velocityId = velocity.read.attach(0); //
+    gl.uniform1i(advectionProgram.uniforms.uVelocity, velocityId); // Advecting field
+    gl.uniform1i(advectionProgram.uniforms.uSource, velocityId);  // Quantity being advected
+    gl.uniform1f(advectionProgram.uniforms.dt, dt); //
+    gl.uniform1f(advectionProgram.uniforms.dissipation, config.VELOCITY_DISSIPATION); //
+    blit(velocity.write); //
+    velocity.swap(); //
+
+    // ★ 障害物マスク適用 (Velocity Advection適用後)
+    if (config.OBSTACLE_ENABLED) {
+        applyMaskProgram.bind();
+        gl.uniform1i(applyMaskProgram.uniforms.uTarget, velocity.read.attach(0));
+        gl.uniform1i(applyMaskProgram.uniforms.uObstacleMask, obstacleMaskFBO.attach(1));
+        blit(velocity.write);
+        velocity.swap();
+    }
+
+    // --- 6. Advection of Dye (染料の移流) ---
+    if (!ext.supportLinearFiltering) //
+        gl.uniform2f(advectionProgram.uniforms.dyeTexelSize, dye.texelSizeX, dye.texelSizeY); // Now advecting dye, use dye's texel size for source
+    gl.uniform1i(advectionProgram.uniforms.uVelocity, velocity.read.attach(0)); // Use final corrected velocity
+    gl.uniform1i(advectionProgram.uniforms.uSource, dye.read.attach(1)); //
+    gl.uniform1f(advectionProgram.uniforms.dissipation, config.DENSITY_DISSIPATION); //
+    blit(dye.write); //
+    dye.swap(); //
+
+    // ★ 障害物マスク適用 (Dye Advection適用後)
+    if (config.OBSTACLE_ENABLED) {
+        applyMaskProgram.bind();
+        gl.uniform1i(applyMaskProgram.uniforms.uTarget, dye.read.attach(0));
+        gl.uniform1i(applyMaskProgram.uniforms.uObstacleMask, obstacleMaskFBO.attach(1));
+        blit(dye.write);
+        dye.swap();
+    }
 }
-
 function render (target) {
     if (config.BLOOM)
         applyBloom(dye.read, bloom);
@@ -1977,4 +2150,24 @@ function addArrowEventListeners(positionHandle, directionHandle) {
         }
     });
 }
+// script.js
+function updateObstacleMask() {
+    if (!obstacleMaskFBO) return; // FBOがまだ準備できていなければ何もしない
 
+    if (!config.OBSTACLE_ENABLED) {
+        // 障害物が無効ならマスクをクリア (全面0)
+        gl.viewport(0, 0, obstacleMaskFBO.width, obstacleMaskFBO.height);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, obstacleMaskFBO.fbo);
+        gl.clearColor(0.0, 0.0, 0.0, 0.0); // R,G,B,A を0に
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        return;
+    }
+
+    drawObstacleProgram.bind();
+    gl.uniform2f(drawObstacleProgram.uniforms.uCenter, config.OBSTACLE_X, config.OBSTACLE_Y);
+    gl.uniform1f(drawObstacleProgram.uniforms.uRadius, config.OBSTACLE_RADIUS);
+    gl.uniform1f(drawObstacleProgram.uniforms.uAspectRatio, canvas.width / canvas.height);
+    
+    blit(obstacleMaskFBO, true); // trueでクリアしてから描画
+}
