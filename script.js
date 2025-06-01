@@ -82,16 +82,31 @@ let config = {
     SUNRAYS: true,
     SUNRAYS_RESOLUTION: 196,
     SUNRAYS_WEIGHT: 1.0,
-// New properties for the steady flow source:
-    STEADY_FLOW_ENABLED: false,      // To turn the source on/off
-    STEADY_FLOW_X: 0.5,            // X position (0.0 to 1.0)
-    STEADY_FLOW_Y: 0.75,           // Y position (0.0 to 1.0)
-    STEADY_FLOW_SPEED: 20,       // 流れの強さ (絶対値)
-    STEADY_FLOW_ANGLE: 90,         // 流れの角度 (0度が右、90度が上、度数法)
-    STEADY_FLOW_R: 1.0,            // Red component of color (0.0 to 1.0)
-    STEADY_FLOW_G: 0.5,            // Green component of color (0.0 to 1.0)
-    STEADY_FLOW_B: 0.0,            // Blue component of color (0.0 to 1.0)
-    STEADY_FLOW_RADIUS: 0.1,       // Radius of the source (similar scale to SPLAT_RADIUS)
+
+    STEADY_FLOW_SOURCES: [
+        {
+            ENABLED: false,
+            X: 0.25, Y: 0.5,
+            SPEED: 20, ANGLE: 90, 
+            R: 1.0, G: 0.0, B: 0.0,
+            RADIUS: 0.1
+        },
+        {
+            ENABLED: false,
+            X: 0.75, Y: 0.5,
+            SPEED: 15, ANGLE: 270, 
+            R: 0.0, G: 1.0, B: 0.0,
+            RADIUS: 0.08
+        },
+        // 必要に応じて3つ目の流れ源のデフォルト設定を追加
+        {
+            ENABLED: false,
+            X: 0.5, Y: 0.25,
+            SPEED: 10, ANGLE: 0, 
+            R: 0.0, G: 0.0, B: 1.0,
+            RADIUS: 0.12
+        }
+    ]
 }
 
 const arrowOverlay = document.getElementById('arrow-overlay');
@@ -238,17 +253,40 @@ function startGUI () {
         splatStack.push(parseInt(Math.random() * 20) + 5);
     } }, 'fun').name('Random splats');
 
-    // Add new GUI Folder for Steady Flow
-    let steadyFlowFolder = gui.addFolder('Steady Flow Source');
-    steadyFlowFolder.add(config, 'STEADY_FLOW_ENABLED').name('Enabled').onFinishChange(updateArrowVisuals); // 矢印表示/非表示のため
-    steadyFlowFolder.add(config, 'STEADY_FLOW_X', 0.0, 1.0).name('Position X').onChange(updateArrowVisuals).listen();
-    steadyFlowFolder.add(config, 'STEADY_FLOW_Y', 0.0, 1.0).name('Position Y').onChange(updateArrowVisuals).listen();
-    steadyFlowFolder.add(config, 'STEADY_FLOW_SPEED', 0, 500).name('Speed').onChange(updateArrowVisuals).listen(); // 強さ
-    steadyFlowFolder.add(config, 'STEADY_FLOW_ANGLE', 0, 360).name('Angle (deg)').onChange(updateArrowVisuals).listen(); // 角度
-    steadyFlowFolder.add(config, 'STEADY_FLOW_R', 0.0, 1.0).name('Color R').listen(); // 色は矢印の見た目に直接影響しないのでonChangeは任意
-    steadyFlowFolder.add(config, 'STEADY_FLOW_G', 0.0, 1.0).name('Color G').listen();
-    steadyFlowFolder.add(config, 'STEADY_FLOW_B', 0.0, 1.0).name('Color B').listen();
-    steadyFlowFolder.add(config, 'STEADY_FLOW_RADIUS', 0.01, 1.0).name('Radius').listen(); // 半径も矢印の見た目に影響しないのでonChangeは任意
+    // // Add new GUI Folder for Steady Flow
+    // let steadyFlowFolder = gui.addFolder('Steady Flow Source');
+    // steadyFlowFolder.add(config, 'STEADY_FLOW_ENABLED').name('Enabled').onFinishChange(updateArrowVisuals); // 矢印表示/非表示のため
+    // steadyFlowFolder.add(config, 'STEADY_FLOW_X', 0.0, 1.0).name('Position X').onChange(updateArrowVisuals).listen();
+    // steadyFlowFolder.add(config, 'STEADY_FLOW_Y', 0.0, 1.0).name('Position Y').onChange(updateArrowVisuals).listen();
+    // steadyFlowFolder.add(config, 'STEADY_FLOW_SPEED', 0, 500).name('Speed').onChange(updateArrowVisuals).listen(); // 強さ
+    // steadyFlowFolder.add(config, 'STEADY_FLOW_ANGLE', 0, 360).name('Angle (deg)').onChange(updateArrowVisuals).listen(); // 角度
+    // steadyFlowFolder.add(config, 'STEADY_FLOW_R', 0.0, 1.0).name('Color R').listen(); // 色は矢印の見た目に直接影響しないのでonChangeは任意
+    // steadyFlowFolder.add(config, 'STEADY_FLOW_G', 0.0, 1.0).name('Color G').listen();
+    // steadyFlowFolder.add(config, 'STEADY_FLOW_B', 0.0, 1.0).name('Color B').listen();
+    // steadyFlowFolder.add(config, 'STEADY_FLOW_RADIUS', 0.01, 1.0).name('Radius').listen(); // 半径も矢印の見た目に影響しないのでonChangeは任意
+    
+    // 流れ源のGUIコントロールを生成
+    config.STEADY_FLOW_SOURCES.forEach((source, index) => {
+        const folderName = `Flow Source ${index + 1}`;
+        let sourceFolder = gui.addFolder(folderName);
+        sourceFolder.add(source, 'ENABLED').name('Enabled');
+        sourceFolder.add(source, 'X', 0.0, 1.0).name('Position X').listen();
+        sourceFolder.add(source, 'Y', 0.0, 1.0).name('Position Y').listen();
+
+        // Speed/Angle方式の場合
+        sourceFolder.add(source, 'SPEED', 0, 500).name('Speed').listen();
+        sourceFolder.add(source, 'ANGLE', 0, 360).name('Angle (deg)').listen();
+
+        // DX/DY方式の場合 (上記とどちらかを選択)
+        // sourceFolder.add(source, 'DX', -5000, 5000).name('Velocity X').listen();
+        // sourceFolder.add(source, 'DY', -5000, 5000).name('Velocity Y').listen();
+
+        sourceFolder.add(source, 'R', 0.0, 1.0).name('Color R').listen();
+        sourceFolder.add(source, 'G', 0.0, 1.0).name('Color G').listen();
+        sourceFolder.add(source, 'B', 0.0, 1.0).name('Color B').listen();
+        sourceFolder.add(source, 'RADIUS', 0.01, 1.0).name('Radius').listen();
+        // sourceFolder.open(); // 必要ならデフォルトでフォルダを開く
+    });
 
     let bloomFolder = gui.addFolder('Bloom');
     bloomFolder.add(config, 'BLOOM').name('enabled').onFinishChange(updateKeywords);
@@ -1210,7 +1248,7 @@ function update () {
     updateColors(dt);
     applyInputs();
     if (!config.PAUSED){
-        applySteadyFlow(); // Call the new function here
+        applyAllSteadyFlows(); // Call the new function here
         step(dt);
     }
     render(null);
@@ -1492,32 +1530,58 @@ function splat (x, y, dx, dy, color, radiusValueOverride) { // New signature
     dye.swap();
 }
 
-function applySteadyFlow () {
-    if (config.STEADY_FLOW_ENABLED) {
-        // Convert 0-1 GUI color to the 0.0-0.15 range used by splats
-        const steadyColor = {
-            r: config.STEADY_FLOW_R * 0.15,
-            g: config.STEADY_FLOW_G * 0.15,
-            b: config.STEADY_FLOW_B * 0.15
-        };
-        // 角度（度数法）をラジアンに変換
-        const angleRad = config.STEADY_FLOW_ANGLE * Math.PI / 180.0;
-        // DX, DYを計算 (数学の標準的な角度。0度がX軸正方向、角度増加は反時計回り)
-        // シミュレーションのY軸が上向き正の場合、sinでOK。
-        // もしシミュレーションのY軸が下向き正なら、dy = config.STEADY_FLOW_SPEED * Math.sin(angleRad) * -1; のように調整
-        const dx = config.STEADY_FLOW_SPEED * Math.cos(angleRad);
-        const dy = config.STEADY_FLOW_SPEED * Math.sin(angleRad) * -1;
-        // The STEADY_FLOW_RADIUS from config is used similarly to SPLAT_RADIUS,
-        // so it also needs division by 100.0 before being passed to splat.
-        splat(
-            config.STEADY_FLOW_X,
-            config.STEADY_FLOW_Y,
-            dx,
-            dy,
-            steadyColor,
-            config.STEADY_FLOW_RADIUS / 100.0 // Pass the specific radius for the steady source
-        );
-    }
+// script.js
+
+// 以前の applySteadyFlow は applySingleSteadyFlow にリネームするか、
+// この新しい関数でロジックを置き換えます。
+// ここでは新しい関数名を applyAllSteadyFlows とします。
+function applyAllSteadyFlows () {
+    config.STEADY_FLOW_SOURCES.forEach(source => {
+        if (source.ENABLED) {
+            const flowColor = {
+                r: source.R * 0.15,
+                g: source.G * 0.15,
+                b: source.B * 0.15
+            };
+
+            let dx, dy;
+            // Speed/Angle方式の場合
+            const angleRad = source.ANGLE * Math.PI / 180.0;
+            dx = source.SPEED * Math.cos(angleRad);
+            // dy の符号はシミュレーションのY軸と力の解釈に依存します。
+            // 以前の「dy *= -1」が上向きの力として正しかった場合、
+            // 数学的な角度90度（上）のsin結果(1)に-1を掛けるか、
+            // あるいは source.SPEED にマイナス値も許容するか、
+            // もしくはsplat関数側でY方向の力を反転させるなど一貫した方法が必要です。
+            // ここでは、以前の「dy*=-1で期待通り」という情報を元に、
+            // 数学的な角度90度で上向きの力を与えるために、dyを負にするケースを想定してみます。
+            // ただし、これはシミュレーションが負のdyを「上」と解釈する場合です。
+            // splatに渡すdyが正なら上向きの力、という前提に戻すなら、
+            // dy = source.SPEED * Math.sin(angleRad); になります。
+            // ここでは、以前のダイレクトなDY設定(-2000が上)を参考に、
+            // 角度90度(sin=1)のときに負のDYになるように調整します。
+            // (または、角度の定義自体を0度=上などとする方法もあります)
+            // 最も素直なのは、角度90度を「上向きの力」とし、
+            // シミュレーション内部で力のY成分が正なら上、負なら下と解釈されるようにすることです。
+            // 元の STEADY_FLOW_DY = -2000 が上向きだったことから、splatに渡すdyは負の値で上向き。
+            // なので、角度90度（sin=1）のとき、dyが負になるようにします。
+            dy = -source.SPEED * Math.sin(angleRad); // 例: 90度で -SPEED
+
+            // DX/DY方式の場合 (上記とどちらかを選択)
+            // dx = source.DX;
+            // dy = source.DY;
+
+
+            splat(
+                source.X,
+                source.Y,
+                dx,
+                dy,
+                flowColor,
+                source.RADIUS / 100.0
+            );
+        }
+    });
 }
 
 function correctRadius (radius) {
