@@ -82,7 +82,7 @@ let config = {
     SUNRAYS: true,
     SUNRAYS_RESOLUTION: 196,
     SUNRAYS_WEIGHT: 1.0,
-// New properties for the steady flow source:
+    // New properties for the steady flow source:
     STEADY_FLOW_ENABLED: false,      // To turn the source on/off
     STEADY_FLOW_X: 0.5,            // X position (0.0 to 1.0)
     STEADY_FLOW_Y: 0.75,           // Y position (0.0 to 1.0)
@@ -92,6 +92,11 @@ let config = {
     STEADY_FLOW_G: 0.5,            // Green component of color (0.0 to 1.0)
     STEADY_FLOW_B: 0.0,            // Blue component of color (0.0 to 1.0)
     STEADY_FLOW_RADIUS: 0.1,       // Radius of the source (similar scale to SPLAT_RADIUS)
+
+    OBSTACLE_ENABLED: false,
+    OBSTACLE_X: 0.5,
+    OBSTACLE_Y: 0.5,
+    OBSTACLE_RADIUS: 0.1,
 }
 
 const arrowOverlay = document.getElementById('arrow-overlay');
@@ -464,6 +469,7 @@ function addKeywords (source, keywords) {
     });
     return keywordsString + source;
 }
+
 
 const baseVertexShader = compileShader(gl.VERTEX_SHADER, `
     precision highp float;
@@ -894,6 +900,31 @@ const vorticityShader = compileShader(gl.FRAGMENT_SHADER, `
     }
 `);
 
+// const pressureShader = compileShader(gl.FRAGMENT_SHADER, `
+//     precision mediump float;
+//     precision mediump sampler2D;
+//
+//     varying highp vec2 vUv;
+//     varying highp vec2 vL;
+//     varying highp vec2 vR;
+//     varying highp vec2 vT;
+//     varying highp vec2 vB;
+//     uniform sampler2D uPressure;
+//     uniform sampler2D uDivergence;
+//
+//     void main () {
+//         float L = texture2D(uPressure, vL).x;
+//         float R = texture2D(uPressure, vR).x;
+//         float T = texture2D(uPressure, vT).x;
+//         float B = texture2D(uPressure, vB).x;
+//         float C = texture2D(uPressure, vUv).x;
+//         float divergence = texture2D(uDivergence, vUv).x;
+//         float pressure = (L + R + B + T - divergence) * 0.25;
+//         gl_FragColor = vec4(pressure, 0.0, 0.0, 1.0);
+//     }
+// `);
+// script.js の pressureShader の定義を置き換え
+// 元の pressureShader の定義はコメントアウトするか削除します。
 const pressureShader = compileShader(gl.FRAGMENT_SHADER, `
     precision mediump float;
     precision mediump sampler2D;
@@ -905,13 +936,27 @@ const pressureShader = compileShader(gl.FRAGMENT_SHADER, `
     varying highp vec2 vB;
     uniform sampler2D uPressure;
     uniform sampler2D uDivergence;
+    uniform sampler2D uObstacleMask; // ★新しいuniform
 
     void main () {
+        // 現在のセルが障害物の場合、圧力を更新しない
+        if (texture2D(uObstacleMask, vUv).r > 0.5) {
+            gl_FragColor = texture2D(uPressure, vUv); // 現在の圧力を維持
+            return;
+        }
+
         float L = texture2D(uPressure, vL).x;
         float R = texture2D(uPressure, vR).x;
         float T = texture2D(uPressure, vT).x;
         float B = texture2D(uPressure, vB).x;
-        float C = texture2D(uPressure, vUv).x;
+        float C = texture2D(uPressure, vUv).x; // 現在のセルの圧力 p_C^k
+
+        // ノイマン境界条件: 隣接セルが障害物なら、その方向の圧力として自分自身の圧力 C を使う
+        if (texture2D(uObstacleMask, vL).r > 0.5) { L = C; }
+        if (texture2D(uObstacleMask, vR).r > 0.5) { R = C; }
+        if (texture2D(uObstacleMask, vT).r > 0.5) { T = C; }
+        if (texture2D(uObstacleMask, vB).r > 0.5) { B = C; }
+
         float divergence = texture2D(uDivergence, vUv).x;
         float pressure = (L + R + B + T - divergence) * 0.25;
         gl_FragColor = vec4(pressure, 0.0, 0.0, 1.0);
@@ -940,6 +985,46 @@ const gradientSubtractShader = compileShader(gl.FRAGMENT_SHADER, `
         gl_FragColor = vec4(velocity, 0.0, 1.0);
     }
 `);
+// script.js
+
+// ... (既存の baseVertexShader などの定義) ...
+
+const drawObstacleShaderSource = `
+    precision highp float;
+    varying vec2 vUv;
+    uniform vec2 uCenter;     // 障害物の中心 (正規化座標 0-1)
+    uniform float uRadius;    // 障害物の半径 (正規化座標 0-1)
+    uniform float uAspectRatio; // キャンバスのアスペクト比 (width/height)
+
+    void main () {
+        vec2 p = vUv - uCenter;
+        p.x *= uAspectRatio; // アスペクト比を補正して円を正円に描画
+        
+        float distSq = dot(p, p);
+        float radiusSq = uRadius * uRadius;
+
+        if (distSq < radiusSq) {
+            gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0); // 障害物マスク値 (Rチャネルを使用)
+        } else {
+            gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); // 流体領域
+        }
+    }
+`;
+
+const applyMaskShaderSource = `
+    precision mediump float;
+    precision mediump sampler2D;
+    varying vec2 vUv;
+    uniform sampler2D uTarget;       // 処理対象のテクスチャ (速度または密度)
+    uniform sampler2D uObstacleMask; // 障害物マスク
+
+    void main () {
+        float isObstacle = texture2D(uObstacleMask, vUv).r; // マスク値 (0か1)
+        vec4 originalValue = texture2D(uTarget, vUv);
+        // isObstacleが1なら(0.0, 0.0, 0.0, 0.0)を、0ならoriginalValueを返す
+        gl_FragColor = mix(originalValue, vec4(0.0), isObstacle);
+    }
+`;
 
 const blit = (() => {
     gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
@@ -976,6 +1061,10 @@ function CHECK_FRAMEBUFFER_STATUS () {
         console.trace("Framebuffer error: " + status);
 }
 
+let obstacleMaskFBO; // これはFBOなので後で作成
+let drawObstacleProgram;
+let applyMaskProgram;
+
 let dye;
 let velocity;
 let divergence;
@@ -1005,6 +1094,8 @@ const curlProgram            = new Program(baseVertexShader, curlShader);
 const vorticityProgram       = new Program(baseVertexShader, vorticityShader);
 const pressureProgram        = new Program(baseVertexShader, pressureShader);
 const gradienSubtractProgram = new Program(baseVertexShader, gradientSubtractShader);
+const drawObstacleProgram = new Program(baseVertexShader, compileShader(gl.FRAGMENT_SHADER, drawObstacleShaderSource));
+const applyMaskProgram = new Program(baseVertexShader, compileShader(gl.FRAGMENT_SHADER, applyMaskShaderSource));
 
 const displayMaterial = new Material(baseVertexShader, displayShaderSource);
 
